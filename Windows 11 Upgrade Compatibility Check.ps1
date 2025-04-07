@@ -1,4 +1,4 @@
-##THis is a script to check if your Windows 10 PC is compatible with Windows 11
+##This is a script to check if your Windows 10 PC is compatible with Windows 11
 ##It checks the following:
 # - TPM 2.0
 # - Secure Boot
