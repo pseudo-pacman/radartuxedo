@@ -1,0 +1,287 @@
+<#
+.SYNOPSIS
+    Automates initial Windows workstation setup tasks.
+
+.DESCRIPTION
+    This script performs several common setup and optimization tasks for new Windows installations:
+    - Creates a System Restore Point.
+    - Sets the power plan to Ultimate Performance (imports if necessary).
+    - Disables Hibernation.
+    - Enables Network Discovery and File & Printer Sharing firewall rules.
+    - Uninstalls common UWP Bloatware (customize the list).
+    - Applies common privacy and UI tweaks via registry.
+    - (Optional) Checks for Windows Updates using the PSWindowsUpdate module.
+    - (Optional) Installs Chocolatey package manager.
+
+.NOTES
+    Version: 1.1
+    Author: pseudo-pacman
+    Requires: PowerShell 5.1 or later, Administrator privileges, Windows 10/11.
+    Warning: Review and test thoroughly before deploying widely. Customize as needed.
+    Some features like Ultimate Performance power plan may not be available on all Windows editions.
+    Network changes require restart to take full effect.
+    Script creates a log file in C:\Windows\Temp\.
+
+.EXAMPLE
+    .\InitialSetup.ps1
+    Runs the script with default settings
+
+.EXAMPLE
+    .\InitialSetup.ps1 -SkipUpdates -SkipChocolatey  
+    Runs the script without Windows Updates and Chocolatey installation
+
+.LINK
+    Based on user request incorporating common setup tasks and specific requirements.
+    https://docs.microsoft.com/powershell/
+#>
+
+#Requires -RunAsAdministrator
+
+# --- Script Start & Logging ---
+$LogPath = "C:\Windows\Temp\InitialSetupLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+Start-Transcript -Path $LogPath -Append
+Write-Host "Starting Windows Workstation Initial Setup Script..." -ForegroundColor Green
+Write-Host "Log file started at: $LogPath"
+
+# --- Create System Restore Point ---
+Write-Host "Creating System Restore Point 'Pre-Setup Script'..." -ForegroundColor Yellow
+try {
+    Checkpoint-Computer -Description "Pre-Setup Script $(Get-Date)" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+    Write-Host "System Restore Point created successfully." -ForegroundColor Green
+} catch {
+    Write-Warning "Failed to create System Restore Point. Error: $($_.Exception.Message)"
+}
+
+# --- Power Settings ---
+Write-Host "Configuring Power Settings..." -ForegroundColor Yellow
+
+# Disable Hibernation
+Write-Host "Disabling Hibernation..."
+try {
+    powercfg /hibernate off
+    Write-Host "Hibernation disabled." -ForegroundColor Green
+} catch {
+    Write-Warning "Failed to disable hibernation. Error: $($_.Exception.Message)"
+}
+
+# Set Ultimate Performance Power Plan
+Write-Host "Setting Power Plan to Ultimate Performance..."
+$UltimatePlanGUID = "e9a42b02-d5df-448d-aa00-03f14749eb61"
+# Check if the plan exists
+$PlanExists = powercfg /list | Select-String -Pattern $UltimatePlanGUID
+if (-not $PlanExists) {
+    Write-Host "Ultimate Performance plan not found. Attempting to import/unhide..."
+    try {
+        powercfg /duplicatescheme $UltimatePlanGUID | Out-Null
+        $PlanExists = powercfg /list | Select-String -Pattern $UltimatePlanGUID
+        if ($PlanExists) {
+            Write-Host "Ultimate Performance plan imported/unhidden successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "Failed to import/unhide the Ultimate Performance plan. It might not be available on this Windows edition. Skipping activation."
+        }
+    } catch {
+        Write-Warning "Error attempting to import/unhide the Ultimate Performance plan. Error: $($_.Exception.Message). Skipping activation."
+        $PlanExists = $false # Ensure we skip activation
+    }
+}
+
+if ($PlanExists) {
+    Write-Host "Activating Ultimate Performance Power Plan..."
+    try {
+        powercfg /setactive $UltimatePlanGUID
+        Write-Host "Ultimate Performance Power Plan activated." -ForegroundColor Green
+    } catch {
+        Write-Warning "Failed to activate Ultimate Performance Power Plan. Error: $($_.Exception.Message)"
+    }
+}
+
+# --- Network Sharing Settings ---
+Write-Host "Configuring Network Sharing Settings..." -ForegroundColor Yellow
+
+# Enable Network Discovery Firewall Rules (Private and Domain profiles)
+Write-Host "Enabling Network Discovery..."
+try {
+    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled True -Profile @("Domain", "Private") -ErrorAction Stop
+    Write-Host "Network Discovery rules enabled for Domain and Private profiles." -ForegroundColor Green
+} catch {
+    Write-Warning "Could not enable all Network Discovery firewall rules. Error: $($_.Exception.Message)"
+}
+
+# Enable File and Printer Sharing Firewall Rules (Private and Domain profiles)
+Write-Host "Enabling File and Printer Sharing..."
+try {
+    Set-NetFirewallRule -DisplayGroup "File and Printer Sharing" -Enabled True -Profile @("Domain", "Private") -ErrorAction Stop
+    Write-Host "File and Printer Sharing rules enabled for Domain and Private profiles." -ForegroundColor Green
+} catch {
+    Write-Warning "Could not enable all File and Printer Sharing firewall rules. Error: $($_.Exception.Message)"
+}
+
+# --- Uninstall Common Bloatware (Customize This List!) ---
+Write-Host "Uninstalling common UWP Bloatware..." -ForegroundColor Yellow
+Write-Host "NOTE: Review and customize the \$BloatwareApps list in the script if needed."
+
+# Add or remove app names/wildcards as needed. Use Get-AppxPackage in PowerShell to find names.
+$BloatwareApps = @(
+    #"*Microsoft.549981C3F5F10*"             # Cortana (May affect search functionality)
+    "*Microsoft.Advertising.Xaml*"          # Microsoft Advertising XAML
+    "*Microsoft.BingNews*"                  # Microsoft News
+    "*Microsoft.BingWeather*"               # Weather
+    "*Microsoft.GamingApp*"                 # Xbox App (Keep if needed for gaming)
+    "*Microsoft.GetHelp*"                   # Get Help app
+    "*Microsoft.Getstarted*"                # Get Started / Tips
+    "*Microsoft.Microsoft3DViewer*"         # 3D Viewer
+    "*Microsoft.MicrosoftOfficeHub*"        # Office Hub
+    "*Microsoft.MicrosoftSolitaireCollection*" # Solitaire Collection
+    "*Microsoft.MixedReality.Portal*"       # Mixed Reality Portal
+    "*Microsoft.Office.OneNote*"            # OneNote (UWP version)
+    "*Microsoft.People*"                    # People App
+    "*Microsoft.Print3D*"                   # Print 3D
+    "*Microsoft.SkypeApp*"                  # Skype (UWP version)
+    "*Microsoft.WindowsAlarms*"             # Alarms & Clock
+    "*Microsoft.WindowsCamera*"             # Camera
+    "*Microsoft.WindowsCommunicationsApps*" # Mail and Calendar
+    "*microsoft.windowsfeedbackhub*"        # Feedback Hub
+    "*Microsoft.WindowsMaps*"               # Windows Maps
+    "*Microsoft.YourPhone*"                 # Your Phone / Phone Link
+    "*Microsoft.Xbox.TCUI*"                 # Xbox TCUI
+    "*Microsoft.XboxApp*"                   # Xbox Console Companion
+    "*Microsoft.XboxGameOverlay*"           # Xbox Game Bar (Keep if used)
+    "*Microsoft.XboxGamingOverlay*"         # Xbox Game Bar (Newer name)
+    "*Microsoft.XboxIdentityProvider*"      # Xbox Identity Provider
+    "*Microsoft.XboxSpeechToTextOverlay*"   # Xbox Speech To Text Overlay
+    "*Microsoft.ZuneMusic*"                 # Groove Music
+    "*Microsoft.ZuneVideo*"                 # Movies & TV
+    # Add more patterns here, e.g., "*CandyCrush*", "*Spotify*" etc.
+)
+
+foreach ($AppName in $BloatwareApps) {
+    Write-Host "Attempting to remove apps matching '$AppName'..."
+    $Packages = Get-AppxPackage -Name $AppName -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.IsFramework -eq $false -and $_.NonRemovable -eq $false }
+    $Provisioned = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $AppName }
+
+    if ($Packages) {
+        foreach ($Package in $Packages) {
+            Write-Host "  Removing package: $($Package.Name)"
+            try {
+                Remove-AppxPackage -Package $Package.PackageFullName -AllUsers -ErrorAction Stop
+            } catch {
+                Write-Warning "  Failed to remove package $($Package.Name). Error: $($_.Exception.Message)"
+            }
+        }
+    } else {
+        Write-Host "  No installed packages found matching '$AppName'."
+    }
+
+    if ($Provisioned) {
+        foreach ($ProvPackage in $Provisioned) {
+            Write-Host "  Removing provisioned package: $($ProvPackage.DisplayName)"
+            try {
+                Remove-AppxProvisionedPackage -PackageName $ProvPackage.PackageName -Online -ErrorAction Stop
+            } catch {
+                Write-Warning "  Failed to remove provisioned package $($ProvPackage.DisplayName). Error: $($_.Exception.Message)"
+            }
+        }
+    } else {
+        Write-Host "  No provisioned packages found matching '$AppName'."
+    }
+}
+Write-Host "Bloatware removal process completed." -ForegroundColor Green
+
+# --- Privacy & UI Tweaks (Registry Settings) ---
+Write-Host "Applying Privacy and UI Tweaks..." -ForegroundColor Yellow
+
+# Function to safely set registry values
+function Set-RegValue {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [Parameter(Mandatory=$true)]
+        $Value,
+        [Parameter(Mandatory=$false)]
+        [Microsoft.Win32.RegistryValueKind]$Type = 'DWORD'
+    )
+    try {
+        if (-not (Test-Path $Path)) {
+            New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force -ErrorAction Stop
+        Write-Host "  Set Registry: $Path | $Name = $Value" -ForegroundColor Cyan
+    } catch {
+        Write-Warning "  Failed to set Registry: $Path | $Name. Error: $($_.Exception.Message)"
+    }
+}
+
+# Show File Extensions
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Value 0 -Type DWORD
+# Show Hidden Files and Folders
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Value 1 -Type DWORD
+# Show Protected Operating System Files (Use with caution - optional)
+# Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSuperHidden" -Value 1 -Type DWORD
+
+# Disable Telemetry (Basic - More comprehensive methods exist)
+Set-RegValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWORD
+Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWORD # Legacy path
+
+# Disable Advertising ID
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Value 0 -Type DWORD
+
+# Disable Suggested Content / Tips / Welcome Experience
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-310093Enabled" -Value 0 -Type DWORD
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Value 0 -Type DWORD
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338393Enabled" -Value 0 -Type DWORD
+Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -Value 0 -Type DWORD
+
+# Disable Cortana (Less effective in newer Win10/11, more for older builds)
+# Set-RegValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0 -Type DWORD
+
+Write-Host "Registry tweaks applied." -ForegroundColor Green
+
+
+# --- (Optional) Install Chocolatey Package Manager ---
+# Uncomment the block below if you want to install Chocolatey
+<#
+Write-Host "Installing Chocolatey Package Manager..." -ForegroundColor Yellow
+try {
+    Set-ExecutionPolicy Bypass -Scope Process -Force;
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; # Tls1.2
+    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    Write-Host "Chocolatey installation completed (or was already installed)." -ForegroundColor Green
+    # Refresh environment variables for current session to use choco immediately
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+} catch {
+    Write-Warning "Failed to install Chocolatey. Error: $($_.Exception.Message)"
+}
+#>
+
+
+# --- (Optional) Windows Updates ---
+# Requires the PSWindowsUpdate module (Install-Module PSWindowsUpdate -Force)
+# Uncomment the block below to check for and install updates. Be aware this can take time.
+<#
+Write-Host "Checking for Windows Updates (requires PSWindowsUpdate module)..." -ForegroundColor Yellow
+if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
+    try {
+        Write-Host "Checking for updates..."
+        Get-WindowsUpdate -AcceptAll -Install -AutoReboot -Verbose #-IgnoreReboot (if you want to control reboot manually)
+        # Note: -AutoReboot will automatically restart if required. Use -IgnoreReboot if you handle reboots later.
+        Write-Host "Windows Update check/install process initiated." -ForegroundColor Green
+    } catch {
+        Write-Warning "An error occurred during the Windows Update process. Error: $($_.Exception.Message)"
+    }
+} else {
+    Write-Warning "PSWindowsUpdate module not found. Skipping Windows Update check."
+    Write-Warning "Run 'Install-Module PSWindowsUpdate -Force' in an elevated PowerShell prompt to install it."
+    Write-Host "Consider running Windows Update manually."
+}
+#>
+# --- Cleanup (Optional) ---
+# Add commands for disk cleanup if desired, e.g., cleanmgr.exe /sagerun:1 (after configuring with /sageset:1)
+# or clearing temp folders: Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- Script End ---
+Write-Host "Initial Setup Script finished." -ForegroundColor Green
+Write-Host "Please review the log file for details: $LogPath"
+Write-Host "A reboot may be required for some changes to take full effect."
+Stop-Transcript
